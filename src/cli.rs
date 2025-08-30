@@ -83,5 +83,3 @@ pub enum MatchMode {
     /// Exact matching - only exact substring matches
     Exact,
 }
-
-

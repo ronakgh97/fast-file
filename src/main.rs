@@ -66,11 +66,7 @@ fn search_files(
     }).expect("Error setting Ctrl-C handler");
 
     println!("{} Searching in: {}", "🔍".yellow(), search_path.display().to_string().cyan());
-    println!("{} Match mode: {} | Press {} to cancel",
-             "💡".dimmed(),
-             format!("{:?}", match_mode).blue(),
-             "Ctrl+C".red()
-    );
+    println!("   Match mode: {} | Press {} to cancel", format!("{:?}", match_mode).blue(),"Ctrl+C".red());
 
     let walker = WalkDir::new(search_path)
         .follow_links(false)
@@ -101,6 +97,7 @@ fn search_files(
         match entry {
             Ok(entry) => {
                 let path = entry.path();
+                //eprintln!("❕Scanning: -> {}  ", path.display().to_string().green());
                 let is_dir = path.is_dir();
 
                 // Count files and directories
@@ -378,14 +375,15 @@ fn spawn_terminal(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(target_os = "linux")]
     {
-        // Linux: Try different terminals in order of preference
+        let path_str = path.display().to_string(); // Create string once
+
         let terminals = [
-            ("gnome-terminal", vec!["--working-directory", &path.display().to_string()]),
-            ("konsole", vec!["--workdir", &path.display().to_string()]),
-            ("xfce4-terminal", vec!["--working-directory", &path.display().to_string()]),
-            ("alacritty", vec!["--working-directory", &path.display().to_string()]),
-            ("kitty", vec!["--directory", &path.display().to_string()]),
-            ("x-terminal-emulator", vec!["--working-directory", &path.display().to_string()]),
+            ("gnome-terminal", vec!["--working-directory", &path_str]),
+            ("konsole", vec!["--workdir", &path_str]),
+            ("xfce4-terminal", vec!["--working-directory", &path_str]),
+            ("alacritty", vec!["--working-directory", &path_str]),
+            ("kitty", vec!["--directory", &path_str]),
+            ("wezterm", vec!["start", "--cwd", &path_str]),
         ];
 
         let mut success = false;
@@ -397,16 +395,7 @@ fn spawn_terminal(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if !success {
-            // Fallback: try to open any terminal and cd manually
-            let fallback_cmd = format!("cd '{}' && exec $SHELL", path.display());
-            Command::new("x-terminal-emulator")
-                .args(&["-e", "bash", "-c", &fallback_cmd])
-                .spawn()
-                .or_else(|_| {
-                    Command::new("xterm")
-                        .args(&["-e", "bash", "-c", &fallback_cmd])
-                        .spawn()
-                })?;
+            return Err("No compatible terminal found on Linux".into());
         }
     }
 
@@ -414,7 +403,7 @@ fn spawn_terminal(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     {
         // macOS: Use AppleScript to open Terminal.app
         let script = format!(
-            "tell application \"Terminal\" to do script \"cd '{}' && clear\"",
+            "tell application \"Terminal\" to do script \"cd '{}' && clear\" in window 1",
             path.display()
         );
         Command::new("osascript")
