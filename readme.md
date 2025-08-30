@@ -8,7 +8,7 @@ or maybe this serves different purpose, I am **not** aware.
 ![Rust](https://img.shields.io/badge/rust-1.80+-orange.svg)
 
 
-![Demo](demo-gif.gif)  
+## ![Demo](demo-gif.gif)  
 **Search and open your favourite IDE!**
 
 ## Features
