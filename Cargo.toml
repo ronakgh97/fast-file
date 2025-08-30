@@ -1,0 +1,16 @@
+[package]
+name = "file-loc"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ff"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5.46", features = ["derive"] }
+walkdir = { version = "2.5.0" }
+fuzzy-matcher = "0.3.7"
+arboard = "3.2"
+colored = "3.0.0"
+ctrlc = "3.4.7"
