@@ -2,13 +2,17 @@ mod cli;
 
 use clap::Parser;
 use colored::*;
+use rayon::prelude::*;
 use fuzzy_matcher::FuzzyMatcher;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use walkdir::WalkDir;
 use crate::cli::{Cli, MatchMode};
+use std::thread;
+use std::time::{Duration, Instant};
+use figlet_rs::FIGfont;
 
 #[derive(Debug)]
 struct SearchResult {
@@ -19,25 +23,52 @@ struct SearchResult {
     modified: Option<std::time::SystemTime>,
 }
 
+fn show_banner() {
+    let font = FIGfont::standard().unwrap();
+    let banner = font.convert("ff-fast file").unwrap();
+
+    let text = banner.to_string();
+    let lines: Vec<&str> = text.lines().collect();
+
+    // Gradient palette
+    let gradient = vec![
+        Color::Red,
+        Color::Yellow,
+        Color::Green,
+        Color::Blue,
+        Color::Magenta,
+        Color::Cyan,
+    ];
+
+    // Print each line with gradient color
+    for (i, line) in lines.iter().enumerate() {
+        let color = gradient[i % gradient.len()];
+        println!("{}", line.color(color).bold());
+    }
+}
+
 fn show_welcome_help() {
-    println!("{}", "🚀 Fast File Finder".bright_cyan().bold());
-    println!();
-    println!("{}", "USAGE:".yellow().bold());
-    println!("    {} {} {}", "ff".green().bold(), "<args>".white(), "<options>".yellow());
-    println!();
-    println!("{}", "EXAMPLES:".yellow().bold());
-    println!("    {} {}          {}", "ff".green(), "<your_file_name>".white(), "→ Locate/s that file/s".dimmed());
-    println!("    {} {}        {}", "ff".green(), "main.rs".white(), "→ Find main.rs files".dimmed());
-    println!();
-    println!("{}", "OPTIONS:".yellow().bold());
-    println!("    {} {}        {}", "--path".blue(), "<dir>".white(), "Search in specific directory".dimmed());
-    println!("    {} {}           {}", "--copy".blue(), "     ".white(), "Copy path to clipboard".dimmed());
-    println!("    {} {}       {}", "--hidden".blue(), "   ".white(), "Include hidden files".dimmed());
-    println!("    {} {}    {}", "--dirs-only".blue(), " ".white(), "Find only directories".dimmed());
-    println!("    {} {}   {}", "--files-only".blue(), "".white(), "Find only files".dimmed());
-    println!();
-    println!("   Type {} for detailed help", "ff --help".green().bold());
-    println!("{} Press {} to cancel search anytime", "⚠️".bright_yellow(), "Ctrl+C".red().bold());
+
+    show_banner();
+
+    println!("\n{}", "Fast File Finder".bright_cyan().bold());
+
+    println!("\n{}", "USAGE:".yellow().bold());
+    println!("  {} {} {}", "ff".green().bold(), "<args>".white(), "<options>".yellow());
+
+    println!("\n{}", "EXAMPLES:".yellow().bold());
+    println!("  {} {}      {}", "ff".green(), "<your_file_name>".white(), "→ Locate file(s)".dimmed());
+    println!("  {} {}          {}", "ff".green(), "main.rs".white(), "→ Find main.rs files".dimmed());
+
+    println!("\n{}", "OPTIONS:".yellow().bold());
+    println!("  {:<12} {:<10} {}", "--path".blue(), "<dir>".white(), "Search in directory".dimmed());
+    println!("  {:<12} {:<10} {}", "--copy".blue(), "" , "Copy path to clipboard".dimmed());
+    println!("  {:<12} {:<10} {}", "--hidden".blue(), "" , "Include hidden files".dimmed());
+    println!("  {:<12} {:<10} {}", "--dirs-only".blue(), "" , "Find only directories".dimmed());
+    println!("  {:<12} {:<10} {}", "--files-only".blue(), "" , "Find only files".dimmed());
+
+    println!("\n  Type {} for detailed help", "ff --help".green().bold());
+    println!("  {} Press {} anytime to cancel", "⚠️".bright_yellow(), "Ctrl+C".red().bold());
 }
 
 fn search_files(
@@ -90,7 +121,7 @@ fn search_files(
     for entry in walker {
         // Check cancellation frequently
         if !running.load(Ordering::SeqCst) {
-            println!("{} Search stopped", "⏹️".red());
+            println!("{} Search stopped", "🛑".red());
             break;
         }
 
@@ -130,18 +161,7 @@ fn search_files(
                 // Extract filename and perform matching
                 if let Some(file_name) = path.file_name() {
                     if let Some(name_str) = file_name.to_str() {
-                        let score = match match_mode {
-                            MatchMode::Fuzzy => {
-                                matcher.fuzzy_match(name_str, pattern)
-                            }
-                            MatchMode::Exact => {
-                                if name_str.to_lowercase().contains(&pattern.to_lowercase()) {
-                                    Some(100) // High score for exact matches
-                                } else {
-                                    None
-                                }
-                            }
-                        };
+                        let score = get_best_match_score(name_str, pattern, &matcher, match_mode);
 
                         // Only proceed if we have a match
                         if let Some(score) = score {
@@ -191,6 +211,231 @@ fn search_files(
     results
 }
 
+fn search_files_parallel(
+    search_path: &Path,
+    pattern: &str,
+    include_hidden: bool,
+    dirs_only: bool,
+    files_only: bool,
+    limit: usize,
+    show_details: bool,
+    match_mode: &MatchMode,
+    threads: usize,
+) -> Vec<SearchResult> {
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+    let cpu_cores = num_cpus::get();
+
+    println!("{} Searching in: {} {}",
+             "🔍".yellow(),
+             search_path.display().to_string().cyan(),
+             format!("(Parallel Mode - {} cores)", cpu_cores).green()
+    );
+    println!("   Using {} threads on {} CPU cores", threads, cpu_cores);
+    println!("   Match mode: {} | Press Ctrl+C to cancel", format!("{:?}", match_mode).blue());
+
+    // Add Ctrl+C handling for parallel mode
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+
+    ctrlc::set_handler(move || {
+        println!("\n Search cancelled by user (parallel mode)");
+        r.store(false, Ordering::SeqCst);
+    }).expect("Error setting Ctrl-C handler");
+
+    // Collect all paths first
+    let all_paths: Vec<PathBuf> = WalkDir::new(search_path)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            if !include_hidden {
+                if let Some(name) = e.file_name().to_str() {
+                    if name.starts_with('.') && name.len() > 1 {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
+        .filter_map(|entry| entry.ok().map(|e| e.path().to_path_buf()))
+        .collect();
+
+    println!("🚀 Processing {} paths using {} CPU cores",
+             all_paths.len(), cpu_cores);
+
+    let total_paths = all_paths.len();
+
+    // Atomic counters for progress tracking
+    let files_processed = Arc::new(AtomicUsize::new(0));
+    let dirs_processed = Arc::new(AtomicUsize::new(0));
+    let files_scanned = Arc::new(AtomicUsize::new(0));
+    let dirs_scanned = Arc::new(AtomicUsize::new(0));
+    let processing_complete = Arc::new(AtomicBool::new(false));
+
+    // Progress display thread with cancellation check
+    let files_p = files_processed.clone();
+    let dirs_p = dirs_processed.clone();
+    let files_s = files_scanned.clone();
+    let dirs_s = dirs_scanned.clone();
+    let complete_flag = processing_complete.clone();
+    let running_progress = running.clone();
+
+    let progress_thread = thread::spawn(move || {
+        let mut last_update = Instant::now();
+
+        while !complete_flag.load(Ordering::Relaxed) && running_progress.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(500));
+
+            if last_update.elapsed() >= Duration::from_secs(1) {
+                let processed = files_p.load(Ordering::Relaxed) + dirs_p.load(Ordering::Relaxed);
+                let scanned_f = files_s.load(Ordering::Relaxed);
+                let scanned_d = dirs_s.load(Ordering::Relaxed);
+
+                eprint!("\r{} Processed {}/{} paths, {} files, {} dirs... {}",
+                        "📁".yellow(),
+                        processed,
+                        total_paths,
+                        scanned_f,
+                        scanned_d,
+                        "(Parallel)".green()
+                );
+                io::stdout().flush().unwrap();
+                last_update = Instant::now();
+            }
+        }
+
+        // Clear progress line
+        eprint!("\r{}", " ".repeat(80));
+        eprint!("\r");
+
+        // Show appropriate completion message
+        if running_progress.load(Ordering::Relaxed) {
+            let final_files = files_s.load(Ordering::Relaxed);
+            let final_dirs = dirs_s.load(Ordering::Relaxed);
+            println!("{} Scanned {} files and {} directories total (parallel processing complete)",
+                     "📊".green(), final_files, final_dirs);
+        } else {
+            println!("{} Parallel search stopped", "🛑".red());
+        }
+    });
+
+    // Parallel processing with cancellation checks
+    let mut results: Vec<SearchResult> = all_paths
+        .into_par_iter()
+        .filter_map(|path| {
+            // Check for cancellation in parallel tasks
+            if !running.load(Ordering::Relaxed) {
+                return None;
+            }
+
+            let is_dir = path.is_dir();
+
+            // Update processing counters
+            if is_dir {
+                dirs_processed.fetch_add(1, Ordering::Relaxed);
+            } else {
+                files_processed.fetch_add(1, Ordering::Relaxed);
+            }
+
+            // Apply type filters
+            if dirs_only && !is_dir { return None; }
+            if files_only && is_dir { return None; }
+
+            let file_name = path.file_name()?.to_str()?;
+            let score = get_best_match_score(file_name, pattern, &matcher, match_mode)?;
+
+            // Count matched files/dirs
+            if is_dir {
+                dirs_scanned.fetch_add(1, Ordering::Relaxed);
+            } else {
+                files_scanned.fetch_add(1, Ordering::Relaxed);
+            }
+
+            let (size, modified) = if show_details {
+                if let Ok(metadata) = path.metadata() {
+                    (
+                        if metadata.is_file() { Some(metadata.len()) } else { None },
+                        metadata.modified().ok()
+                    )
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+
+            Some(SearchResult { path, score, is_dir, size, modified })
+        })
+        .collect();
+
+    // Signal completion and wait for progress thread
+    processing_complete.store(true, Ordering::Relaxed);
+    progress_thread.join().unwrap();
+
+    // Only sort and return results if search wasn't cancelled
+    if running.load(Ordering::Relaxed) {
+        results.par_sort_by(|a, b| b.score.cmp(&a.score));
+        results.truncate(limit);
+    } else {
+        // Return partial results if cancelled
+        results.par_sort_by(|a, b| b.score.cmp(&a.score));
+        results.truncate(limit.min(results.len()));
+    }
+
+    results
+}
+
+fn get_best_match_score(
+    filename: &str,
+    pattern: &str,
+    matcher: &fuzzy_matcher::skim::SkimMatcherV2,
+    match_mode: &MatchMode
+) -> Option<i64> {
+    match match_mode {
+        MatchMode::Fuzzy => {
+            // Multi-algorithm fusion for fuzzy mode
+            let fuzzy_score = matcher.fuzzy_match(filename, pattern);
+            let exact_score = if filename.to_lowercase().contains(&pattern.to_lowercase()) {
+                Some(100)
+            } else {
+                None
+            };
+            let prefix_score = if filename.to_lowercase().starts_with(&pattern.to_lowercase()) {
+                Some(150)
+            } else {
+                None
+            };
+
+            // Return the best score
+            [fuzzy_score, exact_score, prefix_score]
+                .into_iter()
+                .flatten()
+                .max()
+        }
+
+        MatchMode::Exact => {
+            // Keep exact mode simple
+            if filename.to_lowercase().contains(&pattern.to_lowercase()) {
+                Some(100)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn get_optimal_threads(cli: &Cli) -> usize {
+    if let Some(threads) = cli.threads {
+        // User specified exact thread count
+        threads
+    } else if cli.max_cpu {
+        // Maximum aggressive mode
+        num_cpus::get() * 2
+    } else {
+        // Default: one thread per core (raspberry pi)
+        num_cpus::get()
+    }
+}
+
 fn display_results(results: &[SearchResult], show_details: bool) {
     if results.is_empty() {
         println!();
@@ -205,7 +450,7 @@ fn display_results(results: &[SearchResult], show_details: bool) {
 
     for (index, result) in results.iter().enumerate() {
         let index_str = format!("{:2}", index + 1);
-        let type_icon = if result.is_dir { "📁" } else { "📄" };
+        let type_icon = get_file_icon(&result);
         let path_str = result.path.display().to_string();
 
         let mut line = format!(
@@ -229,6 +474,67 @@ fn display_results(results: &[SearchResult], show_details: bool) {
         line.push_str(&format!(" {}", format!("({})", result.score).bright_black()));
         println!("{}", line);
     }
+}
+
+fn get_file_icon(result: &SearchResult) -> &'static str {
+    if result.is_dir {
+        return "📁";
+    }
+
+    match result.path.extension().and_then(|s| s.to_str()) {
+
+        // Programming / Scripting
+        Some("rs")               => "🦀",
+        Some("js") | Some("ts")  => "📜",
+        Some("py")               => "🐍",
+        Some("java")             => "☕",
+        Some("cpp") | Some("cxx")| Some("cc") => "💠",
+        Some("c")                => "🔵",
+        Some("h") | Some("hpp")  => "📘",
+        Some("go")               => "🐹",
+        Some("rb")               => "💎",
+        Some("php")              => "🐘",
+        Some("sh") | Some("bash")=> "🐚",
+        Some("swift")            => "🍎",
+        Some("kt") | Some("kts") => "🤖",
+        Some("cs")               => "🎯",
+
+        // Data / Config
+        Some("json")             => "📋",
+        Some("yaml") | Some("yml") => "⚙️",
+        Some("toml")             => "🛠️",
+        Some("ini")              => "📑",
+        Some("csv")              => "📊",
+        Some("xml")              => "🗂️",
+
+        // Markup / Docs
+        Some("md")               => "📝",
+        Some("txt")              => "📄",
+        Some("html") | Some("htm") => "🌐",
+        Some("css")              => "🎨",
+        Some("pdf")              => "📕",
+
+        // Images
+        Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("bmp") | Some("svg") => "🖼️",
+        Some("ico")              => "🔖",
+
+        // Video
+        Some("mp4") | Some("mkv") | Some("avi") | Some("mov") | Some("webm") => "🎬",
+
+        // Audio
+        Some("mp3") | Some("wav") | Some("flac") | Some("ogg") | Some("m4a") => "🎵",
+
+        // Archives
+        Some("zip") | Some("tar") | Some("gz") | Some("bz2") | Some("xz") | Some("7z") => "📦",
+
+        // Misc
+        Some("exe") | Some("bin") | Some("dll") => "⚙️",
+        Some("lock")             => "🔒",
+        Some("log")              => "📜",
+
+        _ => "📄", // Default file
+    }
+
 }
 
 fn format_size(bytes: u64) -> String {
@@ -361,7 +667,6 @@ fn spawn_terminal(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     {
         let path_str = path.display().to_string();
 
-        // This should work more reliably
         Command::new("cmd")
             .args(&[
                 "/C",
@@ -417,6 +722,16 @@ fn spawn_terminal(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
+    let optimal_threads = get_optimal_threads(&cli);
+
+    if cli.parallel {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(optimal_threads)
+            .thread_name(|i| format!("ff-{}", i))
+            .build_global()
+            .unwrap_or_else(|_| {});
+    }
+
     let pattern = match cli.pattern {
         Some(p) => p,
         None => {
@@ -457,16 +772,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Perform search with cancellation support
     let start_time = std::time::Instant::now();
-    let results = search_files(
-        &search_path,
-        &pattern,
-        cli.hidden,
-        cli.dirs_only,
-        cli.files_only,
-        cli.limit,
-        cli.details,
-        &cli.match_mode
-    );
+    let results = if cli.parallel {
+        search_files_parallel(
+            &search_path,
+            &pattern,
+            cli.hidden,
+            cli.dirs_only,
+            cli.files_only,
+            cli.limit,
+            cli.details,
+            &cli.match_mode,
+            optimal_threads
+        )
+    } else {
+        search_files(
+            &search_path,
+            &pattern,
+            cli.hidden,
+            cli.dirs_only,
+            cli.files_only,
+            cli.limit,
+            cli.details,
+            &cli.match_mode
+        )
+    };
+
     let search_duration = start_time.elapsed();
 
     // Display results

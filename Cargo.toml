@@ -10,10 +10,11 @@ keywords = ["cli", "filesystem", "search", "fuzzy", "finder"]
 categories = ["command-line-utilities"]
 
 [profile.release]
-lto = true
+opt-level = 3
+lto = "fat"
 codegen-units = 1
 panic = "abort"
-strip = true
+strip = "symbols"
 
 [[bin]]
 name = "ff"
@@ -26,3 +27,6 @@ fuzzy-matcher = "0.3.7"
 arboard = "3.2"
 colored = "3.0.0"
 ctrlc = "3.4.7"
+rayon = "1.11.0"
+num_cpus = "1.17.0"
+figlet-rs = "0.1.5"

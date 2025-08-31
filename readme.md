@@ -1,6 +1,6 @@
-# ff - Fast File Finder
+# ff - Fast File
 
-**`ff`** is a *blazing-fast* lightweight command-line tool for **finding files** and **directories** on your filesystem.
+**`ff`** is a *blazing-fast⚡* lightweight command-line tool for **finding files** and **directories** on your filesystem.
 Just type part of a name, and ff helps you quickly **find** it—then open it in your *favourite IDE* or *editor*,
 or maybe this serves different purpose, I am **not** aware.
 
@@ -57,8 +57,8 @@ Here are some examples of how to use `ff`:
 # Search for "config.json" in the current directory
 ff config.json
 
-# Search for "main" in the /codes directory
-ff main --path /codes
+# Search for "main" in the /codes directory (using |⚡| search)
+ff main --path /codes --parallel
 
 # Find only directories matching "docker"
 ff docker --dirs-only
@@ -72,15 +72,16 @@ ff "*.rs" --files-only
 
 ### Options
 
-| Short | Long          | Description                                          |
-|-------|---------------|------------------------------------------------------|
-| `-p`  | `--path`      | Directory to search in (default: current directory)  |
-| `-c`  | `--copy`      | Copy selected path to clipboard                      |
-| `-h`  | `--hidden`    | Include hidden files and directories                 |
-| `-l`  | `--limit`     | Maximum number of results to show (default: 10)      |
-| `-d`  | `--dirs-only` | Only match directories                               |
-| `-f`  | `--files-only`| Only match files (exclude directories)               |
-|       | `--details`   | Show detailed information (file sizes, dates)        |
-| `-t`  | `--terminal`  | Open new terminal window in the selected directory   |
-| `-m`  | `--match-mode`| Matching mode: `fuzzy` or `exact` (default: `fuzzy`) |
+| Short | Long           | Description                                          |
+|-------|----------------|------------------------------------------------------|
+| `-p`  | `--path`       | Directory to search in (default: current directory)  |
+| `-c`  | `--copy`       | Copy selected path to clipboard                      |
+| `-h`  | `--hidden`     | Include hidden files and directories                 |
+| `-l`  | `--limit`      | Maximum number of results to show (default: 10)      |
+| `-d`  | `--dirs-only`  | Only match directories                               |
+| `-f`  | `--files-only` | Only match files (exclude directories)               |
+|       | `--details`    | Show detailed information (file sizes, dates)        |
+| `-t`  | `--terminal`   | Open new terminal window in the selected directory   |
+| `-m`  | `--match-mode` | Matching mode: `fuzzy` or `exact` (default: `fuzzy`) |
+| `-pl` | `--parallel`   | uses optimal threads for fast searching              |
 
