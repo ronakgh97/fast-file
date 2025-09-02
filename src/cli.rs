@@ -52,6 +52,14 @@ pub struct Cli {
     #[arg(short = 'm', long, value_enum, default_value = "fuzzy")]
     pub match_mode: MatchMode,
 
+    /// [Search] Search inside file contents (slower but more thorough)
+    #[arg(long, value_name = "TEXT")]
+    pub content: Option<String>,
+
+    /// [Search] Search both filename and content simultaneously
+    #[arg(long)]
+    pub hybrid: bool,
+
     /// [Output] Maximum number of results to show
     #[arg(short = 'l', long, default_value = "10", value_name = "NUM")]
     pub limit: usize,
