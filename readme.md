@@ -1,3 +1,5 @@
+# **No longer Maintanied**
+
 # ff - Fast File
 
 **`ff`** is a *blazing-fast⚡* lightweight command-line tool for **finding files** and **directories** on your filesystem.
@@ -29,7 +31,7 @@ or maybe this serves different purpose, I am **not** aware.
     ![Linux](https://img.shields.io/badge/Linux-Yes-blue?logo=linux)  ![Windows](https://img.shields.io/badge/Windows-Yes-blue?logo=windows)  ![Mac](https://img.shields.io/badge/macOS-Yes-blue?logo=apple)   
 
 
-## 📋 Prerequisites
+## Prerequisites
 - Windows: [Rust](https://rustup.rs/) (1.88.0 or later)
 - WSL (Run this 👇):
     ```bash 
@@ -37,7 +39,7 @@ or maybe this serves different purpose, I am **not** aware.
     ```
 
 
-## ⬇️Installation
+## Installation
 
 You can build from source, locally using `cargo`:
 
