@@ -1,5 +1,3 @@
-# **I gave up**
-
 # ff - Fast File
 
 **`ff`** is a *blazing-fast⚡* lightweight command-line tool for **finding files** and **directories** on your filesystem.
